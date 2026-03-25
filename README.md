@@ -1,19 +1,53 @@
 # AI-Based Traffic Signal Optimization System
 
-An intelligent traffic management system that uses computer vision and machine learning to dynamically optimize traffic signal timing, reducing wait times and improving traffic flow.
+An intelligent traffic signal control system that uses computer vision, machine learning, and traffic simulation to optimize signal timing based on real-time vehicle detection from video feeds.
 
-## Architecture
+## Key Features
+
+- **Real-time Vehicle Detection**: YOLOv8n-based detection with centroid tracking
+- **Intelligent Signal Prediction**: XGBoost classifier (30/60/90/120s green time)
+- **Multi-class Recognition**: Cars, buses/trucks, and motorcycles/bicycles
+- **Weather-aware**: Adjusts recommendations based on rain conditions
+- **SUMO Validation**: ~50% reduction in wait times vs fixed-time control
+- **Interactive Dashboard**: Streamlit web interface for live monitoring
+
+## System Architecture
 
 ```
-Traffic Video Input
-       |
-[Layer 1: YOLO Detection] --> Vehicle counts (cars, buses, bikes)
-       |
-[Layer 2: ML Prediction]  --> Optimal green light duration (30/60/90/120s)
-       |
-[Layer 3: SUMO Simulation] --> Performance validation
-       |
-[Layer 4: Dashboard]      --> Real-time visualization
+┌─────────────────────────────────────────────────────────────────┐
+│                    TRAFFIC VIDEO INPUT                          │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│  LAYER 1: VEHICLE DETECTION (layer1_yolo/detector.py)           │
+│  • YOLOv8n vehicle detection from video frames                  │
+│  • Centroid-based tracking (prevents double-counting)           │
+│  • Vehicle classification: Cars, Buses/Trucks, Bikes            │
+│  • Output: Per-frame logs + 1-second window aggregates          │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│  LAYER 2: ML PREDICTION (layer2_ml/)                            │
+│  • XGBoost classifier with 4 discrete outputs                   │
+│  • Input: vehicle counts + rain condition                       │
+│  • Output: Signal timing (30s, 60s, 90s, 120s) + confidence     │
+│  • Model accuracy: 91.5%                                        │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│  LAYER 3: SUMO SIMULATION (layer3_sumo/)                        │
+│  • Traffic simulation validation                                │
+│  • Adaptive vs. fixed timing comparison                         │
+│  • Performance metrics: wait times, throughput, queue length    │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│  LAYER 4: WEB DASHBOARD (layer4_dashboard/)                     │
+│  • Live video feed with detection overlays                      │
+│  • Real-time vehicle count visualization                        │
+│  • Signal timing recommendations                                │
+│  • Simulation performance comparison                            │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Project Structure
@@ -21,6 +55,7 @@ Traffic Video Input
 ```
 smartcity.v2/
 ├── traffic_pipeline.py      # Main orchestration script
+├── test_pipeline.py         # Test suite
 ├── requirements.txt         # Pinned dependencies
 ├── yolov8n.pt              # YOLOv8 nano model
 │
@@ -33,7 +68,7 @@ smartcity.v2/
 │   ├── predict.py          # Inference module
 │   ├── generate_dataset.py # Synthetic data generator
 │   ├── data/               # Training data
-│   └── models/             # Saved models
+│   └── models/             # Saved models (.joblib)
 │
 ├── layer3_sumo/            # Traffic Simulation
 │   ├── run_adaptive.py     # ML-based signal control
@@ -68,11 +103,19 @@ cd smartcity.v2
 
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
+
+### Install SUMO (for Layer 3)
+
+- **Windows**: Download from [SUMO Downloads](https://sumo.dlr.de/docs/Downloads.php)
+- **Linux**: `sudo apt-get install sumo sumo-tools sumo-doc`
+- **macOS**: `brew install sumo`
+
+Verify: `sumo --version`
 
 ## Quick Start
 
@@ -82,104 +125,66 @@ pip install -r requirements.txt
 streamlit run layer4_dashboard/app.py
 ```
 
-Open http://localhost:8501 in your browser.
+Open http://localhost:8501 - Features:
+- **Tab 1**: Upload & process videos with live YOLO detection
+- **Tab 2**: Predict green time from vehicle counts
+- **Tab 3**: View/run SUMO simulation comparison
 
-### 2. Process a Video
-
-```bash
-python -m layer1_yolo.detector path/to/video.mp4 output.mp4
-```
-
-### 3. Run Full Pipeline
+### 2. Process a Video (CLI)
 
 ```bash
 python traffic_pipeline.py path/to/video.mp4
+# With annotated output
+python traffic_pipeline.py traffic.mp4 output.mp4
+# With rain condition
+python traffic_pipeline.py traffic.mp4 output.mp4 1
 ```
 
-### 4. Run SUMO Simulation Comparison
+### 3. Run SUMO Comparison
 
 ```bash
 python -m layer3_sumo.compare
-# Add --gui flag for visual simulation
+# With GUI visualization
+python -m layer3_sumo.compare --gui
 ```
 
-## Layer Details
+### 4. Test the System
 
-### Layer 1: YOLO Vehicle Detection
-
-Uses YOLOv8 nano model for real-time vehicle detection with centroid-based tracking.
-
-**Features:**
-- Detects cars, buses, trucks, motorcycles, and bicycles
-- Centroid tracking prevents double-counting
-- Configurable confidence threshold and frame skip
-- Live streaming via generator pattern
-
-**Vehicle Groups:**
-| Group | COCO Classes |
-|-------|-------------|
-| CAR | car |
-| BUS_TRUCK | bus, truck |
-| BIKE | bicycle, motorcycle |
-
-### Layer 2: ML Signal Time Prediction
-
-XGBoost classifier predicts optimal green signal duration.
-
-**Input Features:**
-- `car_count` - Number of cars
-- `bus_truck_count` - Number of buses/trucks
-- `bike_count` - Number of bikes
-- `rain` - Weather condition (0/1)
-
-**Output Classes:** 30s, 60s, 90s, or 120s green time
-
-**Train the model:**
 ```bash
-python -m layer2_ml.generate_dataset  # Generate synthetic data
-python -m layer2_ml.train_model       # Train XGBoost model
+python test_pipeline.py
 ```
 
-### Layer 3: SUMO Simulation
+## Usage Examples
 
-Validates ML predictions using traffic simulation.
-
-**Simulation Setup:**
-- 4-way intersection with traffic light
-- 600-second simulation duration
-- Multiple vehicle types and flows
-
-**Results (typical):**
-| Metric | Fixed | Adaptive | Improvement |
-|--------|-------|----------|-------------|
-| Avg Wait Time | ~94s | ~47s | ~50% |
-| Avg Queue Length | ~6.6 | ~4.8 | ~28% |
-
-### Layer 4: Streamlit Dashboard
-
-Interactive web interface with three tabs:
-
-1. **Vehicle Detection** - Upload videos, watch live YOLO detection
-2. **Signal Prediction** - Predict green time from vehicle counts
-3. **Simulation Results** - Compare fixed vs adaptive control
-
-## API Usage
-
-### Detect Vehicles
+### Layer 1: Vehicle Detection
 
 ```python
-from layer1_yolo.detector import detect_vehicles, process_video
+from layer1_yolo.detector import detect_vehicles, process_video, process_video_live
 
-# Single image
+# Single image detection
 result = detect_vehicles("image.jpg")
 print(f"Cars: {result['car_count']}, Buses: {result['bus_truck_count']}")
 
-# Video processing
-result = process_video("video.mp4", "output.mp4")
+# Video processing (batch)
+result = process_video("traffic.mp4", output_path="annotated.mp4")
 print(f"Unique vehicles: {result['unique_totals']}")
+
+# Live streaming (generator)
+for data in process_video_live("traffic.mp4", frame_skip=5, max_frames=300):
+    print(f"Frame {data['frame_number']}: {data['current']}")
+    if data['done']:
+        final = data
+        break
 ```
 
-### Predict Green Time
+**Vehicle Classification:**
+| Group | COCO Classes |
+|-------|-------------|
+| CAR | 2 (car) |
+| BUS_TRUCK | 5 (bus), 7 (truck) |
+| BIKE | 1 (bicycle), 3 (motorcycle) |
+
+### Layer 2: ML Prediction
 
 ```python
 from layer2_ml.predict import predict_green_time, predict_green_time_class
@@ -192,55 +197,128 @@ print(f"Recommended: {green_time}s")
 result = predict_green_time_class(10, 3, 5, rain=0)
 print(f"Time: {result['predicted_green_time']}s")
 print(f"Confidence: {result['confidence']:.1%}")
+print(f"Probabilities: {result['probabilities']}")
 ```
 
-### Run Simulation
+**Output Classes:**
+- **Class 0**: 30s (light traffic)
+- **Class 1**: 60s (moderate traffic)
+- **Class 2**: 90s (heavy traffic)
+- **Class 3**: 120s (very heavy traffic)
+
+### Layer 3: SUMO Simulation
 
 ```python
+from layer3_sumo.run_adaptive import run_adaptive_simulation
 from layer3_sumo.compare import compare
 
-results = compare(rain=0)
-print(f"Wait time improvement: {results['improvement_wait_pct']}%")
+# Run adaptive simulation
+results = run_adaptive_simulation(rain=0, sim_duration=600, gui=False)
+
+# Compare both modes
+comparison = compare(rain=0)
+print(f"Wait time improvement: {comparison['improvement_wait_pct']}%")
+print(f"Queue improvement: {comparison['improvement_queue_pct']}%")
 ```
 
 ## Configuration
 
-Key constants are defined in `utils/constants.py`:
+### Video Processing (utils/constants.py)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `DEFAULT_CONFIDENCE_THRESHOLD` | 0.5 | YOLO detection confidence |
+| `DEFAULT_FRAME_SKIP` | 5 | Process every Nth frame |
+| `DEFAULT_MAX_FRAMES` | 300 | Maximum frames to process |
+| `DEFAULT_MAX_DIST` | 80 | Max distance for track matching (px) |
+| `DEFAULT_MAX_FRAMES_MISSING` | 5 | Frames before track is dropped |
+
+### ML Model Classes
 
 ```python
-GREEN_TIME_CLASSES = [30, 60, 90, 120]  # Possible green times
-MIN_GREEN_TIME = 10                      # Minimum green time
-MAX_GREEN_TIME = 120                     # Maximum green time
-YELLOW_TIME = 3                          # Yellow light duration
-DEFAULT_CONFIDENCE_THRESHOLD = 0.5       # YOLO detection threshold
+GREEN_TIME_CLASSES = [30, 60, 90, 120]
+CLASS_BOUNDARIES = {
+    30:  (0,   45),      # Light traffic
+    60:  (45,  75),      # Moderate
+    90:  (75,  105),     # Heavy
+    120: (105, float("inf"))  # Very heavy
+}
 ```
 
-## Performance
+## Model Performance
 
-- **ML Model Accuracy:** ~91.5%
-- **Detection Speed:** Real-time with frame skipping
-- **Traffic Improvement:** ~50% reduction in average wait time
+### XGBoost Classifier
+- **Accuracy**: 91.5%
+- **Precision**: 91.45%
+- **Recall**: 91.50%
+- **F1-Score**: 91.42%
+
+### SUMO Validation Results (600s simulation)
+
+| Metric | Fixed | Adaptive | Improvement |
+|--------|-------|----------|-------------|
+| Avg Waiting Time | ~94s | ~47s | **~50%** |
+| Avg Queue Length | ~6.6 | ~4.8 | **~28%** |
+| Throughput | 272 | 279 | +7 vehicles |
+
+## Retraining the Model
+
+```bash
+# Generate synthetic training data
+python -m layer2_ml.generate_dataset
+
+# Train XGBoost model
+python -m layer2_ml.train_model
+
+# Test predictions
+python -m layer2_ml.predict
+```
 
 ## Troubleshooting
 
-### SUMO not found
-Make sure SUMO is installed and `sumo` is in your PATH:
-```bash
-sumo --version
-```
+### Model always predicts 30s
+**Cause**: Training data imbalance (Class 0 dominates)
+**Solution**: Generate balanced synthetic data with more high-traffic samples
 
-### Model not found
-Train the ML model first:
-```bash
-python -m layer2_ml.train_model
-```
+### Vehicle counts seem wrong
+**Cause**: Tracker threshold mismatch
+**Solution**: Adjust `max_dist` (higher=fewer duplicates) or `frame_skip` (lower=more accuracy)
 
-### Video processing slow
-Increase frame skip in the dashboard or use:
-```python
-process_video_live(video_path, frame_skip=10, max_frames=300)
-```
+### Video processing is slow
+**Solution**: Increase `frame_skip`, reduce resolution, or skip output video
+
+### SUMO not working
+**Cause**: SUMO not installed or not in PATH
+**Solution**: Install SUMO and verify with `sumo --version`
+
+## Technical Stack
+
+| Component | Technology |
+|-----------|------------|
+| Vehicle Detection | YOLOv8n (Ultralytics) |
+| Object Tracking | Centroid-based tracker |
+| ML Model | XGBoost Classifier |
+| Traffic Simulation | SUMO |
+| Web Dashboard | Streamlit |
+| Visualization | Plotly |
+| Video Processing | OpenCV |
+
+## Future Enhancements
+
+- [ ] Real-time camera feed integration
+- [ ] Multi-intersection coordination
+- [ ] Emergency vehicle priority
+- [ ] Historical pattern analysis
+- [ ] Cloud deployment
+- [ ] Mobile app
 
 ## License
 
 MIT License
+
+## References
+
+- [YOLOv8 Documentation](https://docs.ultralytics.com/)
+- [XGBoost Documentation](https://xgboost.readthedocs.io/)
+- [SUMO Documentation](https://sumo.dlr.de/docs/)
+- [Streamlit Documentation](https://docs.streamlit.io/)
